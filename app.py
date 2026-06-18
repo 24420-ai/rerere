@@ -1,150 +1,30 @@
-from flask import Flask, request, jsonify
-import random
-import requests
-from bs4 import BeautifulSoup
-import urllib.parse
-import os
-from google import genai
-
-app = Flask(__name__)
-
-
-def kakao_text(text):
-    return {
-        "version": "2.0",
-        "template": {
-            "outputs": [{
-                "simpleText": {
-                    "text": text[:1000]
-                }
-            }]
-        }
-    }
-
-
-@app.route("/", methods=["GET"])
-def home():
-    return "Server is running."
-
-
-# 기존 테스트용
-@app.route("/text", methods=["GET", "POST"])
-def text_skill():
-    return jsonify(kakao_text(str(random.randint(1, 10))))
-
-
-@app.route("/image", methods=["GET", "POST"])
-def image_skill():
-    response = {
-        "version": "2.0",
-        "template": {
-            "outputs": [{
-                "simpleImage": {
-                    "imageUrl": "https://t1.daumcdn.net/friends/prod/category/M001_friends_ryan2.jpg",
-                    "altText": "hello I'm Ryan"
-                }
-            }]
-        }
-    }
-    return jsonify(response)
-
-
-# 1. 데이터 그대로 주고받기
-@app.route("/echo", methods=["POST"])
-def echo_skill():
+# [신규 추가] 채널 기본 정보 안내 - 방송규칙 처리 라우트
+@app.route("/channel-rules", methods=["POST"])
+def channel_rules_skill():
     data = request.get_json(silent=True) or {}
-    user_input = data.get("userRequest", {}).get("utterance", "입력값이 없습니다.")
-    return jsonify(kakao_text(user_input))
+    
+    # 카카오톡 챗봇 설정 창에서 지정한 파라미터명을 가져옵니다.
+    # 여기서는 파라미터 이름을 'rule_type'으로 가정했습니다.
+    params = data.get("action", {}).get("params", {})
+    rule_type = params.get("rule_type", "기본").strip()
 
-
-# 2. 울산 날씨 크롤링은 이전에 추가했던 버전 유지 가능
-# 여기서는 생략
-
-
-# 3. 시간/발화/파라미터 확인
-@app.route("/params-check", methods=["POST"])
-def params_check():
-    data = request.get_json(silent=True) or {}
-
-    user_request = data.get("userRequest", {})
-    action = data.get("action", {})
-    params = action.get("params", {})
-
-    a = user_request.get("timezone", "timezone 없음")
-    b = user_request.get("utterance", "utterance 없음")
-    c = params.get("파라미터", "파라미터 없음")
-    d = params.get("파라미터2", "파라미터2 없음")
-
-    text = f"{a} / {b} / {c} / {d}"
-    return jsonify(kakao_text(text))
-
-
-# 4. 파라미터 활용 구글 기사 데이터 가져오기
-@app.route("/google-news", methods=["POST"])
-def google_news():
-    data = request.get_json(silent=True) or {}
-    y = data.get("action", {}).get("params", {}).get("파라미터", "").strip()
-
-    if not y:
-        return jsonify(kakao_text("파라미터 값이 없습니다."))
-
-    query = urllib.parse.quote(y)
-    url = f"https://www.google.com/search?q={query}&tbm=nws"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # Google 뉴스 검색 결과에서 자주 보이는 제목 선택자들 시도
-        items = soup.select(".n0jPhd") or soup.select(".mCBkyc") or soup.select(".DKV0Md")
-
-        titles = []
-        for item in items[:5]:
-            title = item.get_text(strip=True)
-            if title:
-                titles.append(title)
-
-        if titles:
-            result = y + " 검색 결과:\n" + "\n".join([f"{i+1}. {t}" for i, t in enumerate(titles)])
-        else:
-            result = f"{y} 검색 결과를 찾지 못했습니다."
-
-    except Exception as e:
-        result = f"구글 뉴스 조회 중 오류: {str(e)}"
-
-    return jsonify(kakao_text(result))
-
-
-# 5. 파라미터로 Gemini 연동하기
-@app.route("/gemini-param", methods=["POST"])
-def gemini_param():
-    data = request.get_json(silent=True) or {}
-    tt = data.get("action", {}).get("params", {}).get("파라미터", "").strip()
-
-    if not tt:
-        return jsonify(kakao_text("파라미터 값이 없습니다."))
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return jsonify(kakao_text("GEMINI_API_KEY 환경변수가 설정되지 않았습니다."))
-
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=tt
+    # 파라미터 조건에 따른 방송 규칙 분기 처리
+    if "이벤트" in rule_type:
+        rules_text = (
+            "🎉 [이벤트 진행 시 방송 규칙]\n\n"
+            "1. 중복 참여 및 부적절한 방법 참여 시 제외됩니다.\n"
+            "2. 당첨자 비방이나 결과 불복성 도배는 제재 대상입니다.\n"
+            "3. 모두가 즐거운 이벤트를 위해 매너를 지켜주세요!"
         )
-        result_text = response.text if response.text else "응답이 비어 있습니다."
-    except Exception as e:
-        result_text = f"Gemini 호출 중 오류: {str(e)}"
+    else:
+        # 기본 방송 규칙 (파라미터가 없거나 '기본'일 때)
+        rules_text = (
+            "📺 [기본 방송 규칙 안내]\n\n"
+            "1. 욕설, 비하 발언 및 정치적 발언은 절대 금지합니다.\n"
+            "2. 타 스트리머/크리에이터 언급 및 비교를 자제해 주세요.\n"
+            "3. 시청자 간의 과도한 친목(닉네임 부르기 등)은 금합니다.\n"
+            "4. 클린한 방송 환경을 위해 매너 채팅 부탁드립니다! 🙏"
+        )
 
-    return jsonify(kakao_text(result_text))
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
-
+    # 선생님이 만들어두신 kakao_text 함수를 그대로 활용하여 응답
+    return jsonify(kakao_text(rules_text))
